@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Chit-Chat Secure Messaging Design System */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@layer base {
+  :root {
+    /* Core palette - Clean whites with security green accents */
+    --background: 0 0% 98%;
+    --foreground: 220 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+
+    /* Security green as primary */
+    --primary: 152 60% 42%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 152 70% 50%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 20% 20%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 10% 50%;
+
+    --accent: 220 14% 92%;
+    --accent-foreground: 220 20% 10%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 90%;
+    --input: 220 14% 90%;
+    --ring: 152 60% 42%;
+
+    --radius: 0.75rem;
+
+    /* Chat-specific tokens */
+    --chat-bubble-sent: 152 60% 42%;
+    --chat-bubble-sent-foreground: 0 0% 100%;
+    --chat-bubble-received: 220 14% 94%;
+    --chat-bubble-received-foreground: 220 20% 10%;
+    
+    --online: 142 72% 45%;
+    --offline: 220 10% 60%;
+    --typing: 45 93% 55%;
+    
+    --encryption-verified: 152 60% 42%;
+    --encryption-pending: 45 93% 55%;
+    
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 20% 10%;
+    --sidebar-primary: 152 60% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 220 20% 10%;
+    --sidebar-border: 220 14% 90%;
+    --sidebar-ring: 152 60% 42%;
+
+    /* Gradients */
+    --gradient-secure: linear-gradient(135deg, hsl(152 60% 42%), hsl(165 60% 45%));
+    --gradient-header: linear-gradient(180deg, hsl(0 0% 100%), hsl(0 0% 98%));
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(220 20% 10% / 0.03);
+    --shadow-md: 0 4px 6px -1px hsl(220 20% 10% / 0.05), 0 2px 4px -2px hsl(220 20% 10% / 0.03);
+    --shadow-lg: 0 10px 15px -3px hsl(220 20% 10% / 0.05), 0 4px 6px -4px hsl(220 20% 10% / 0.02);
+    --shadow-glow: 0 0 20px hsl(152 60% 42% / 0.15);
+  }
+
+  .dark {
+    --background: 220 20% 7%;
+    --foreground: 220 14% 96%;
+
+    --card: 220 20% 10%;
+    --card-foreground: 220 14% 96%;
+
+    --popover: 220 20% 10%;
+    --popover-foreground: 220 14% 96%;
+
+    --primary: 152 55% 50%;
+    --primary-foreground: 220 20% 7%;
+    --primary-glow: 152 65% 55%;
+
+    --secondary: 220 20% 15%;
+    --secondary-foreground: 220 14% 96%;
+
+    --muted: 220 20% 15%;
+    --muted-foreground: 220 14% 60%;
+
+    --accent: 220 20% 18%;
+    --accent-foreground: 220 14% 96%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 20% 18%;
+    --input: 220 20% 18%;
+    --ring: 152 55% 50%;
+
+    --chat-bubble-sent: 152 55% 45%;
+    --chat-bubble-sent-foreground: 0 0% 100%;
+    --chat-bubble-received: 220 20% 18%;
+    --chat-bubble-received-foreground: 220 14% 96%;
+    
+    --sidebar-background: 220 20% 8%;
+    --sidebar-foreground: 220 14% 96%;
+    --sidebar-primary: 152 55% 50%;
+    --sidebar-primary-foreground: 220 20% 7%;
+    --sidebar-accent: 220 20% 15%;
+    --sidebar-accent-foreground: 220 14% 96%;
+    --sidebar-border: 220 20% 15%;
+    --sidebar-ring: 152 55% 50%;
+
+    --gradient-secure: linear-gradient(135deg, hsl(152 55% 45%), hsl(165 55% 48%));
+    --gradient-header: linear-gradient(180deg, hsl(220 20% 10%), hsl(220 20% 8%));
+    
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.2);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.25), 0 2px 4px -2px hsl(0 0% 0% / 0.2);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.3), 0 4px 6px -4px hsl(0 0% 0% / 0.2);
+    --shadow-glow: 0 0 25px hsl(152 55% 50% / 0.2);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  code, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  .chat-bubble-sent {
+    @apply bg-chat-bubble-sent text-chat-bubble-sent-foreground rounded-2xl rounded-br-md px-4 py-2;
+  }
+  
+  .chat-bubble-received {
+    @apply bg-chat-bubble-received text-chat-bubble-received-foreground rounded-2xl rounded-bl-md px-4 py-2;
+  }
+  
+  .encryption-badge {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium;
+    @apply bg-primary/10 text-primary;
+  }
+  
+  .online-indicator {
+    @apply w-2.5 h-2.5 rounded-full bg-online;
+    box-shadow: 0 0 0 2px hsl(var(--background));
+  }
+  
+  .offline-indicator {
+    @apply w-2.5 h-2.5 rounded-full bg-offline;
+    box-shadow: 0 0 0 2px hsl(var(--background));
+  }
+  
+  .secure-gradient {
+    background: var(--gradient-secure);
+  }
+  
+  .glass-panel {
+    @apply bg-card/80 backdrop-blur-xl border border-border/50;
+  }
+  
+  .glow-ring {
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted)) transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.2);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+  }
+}
