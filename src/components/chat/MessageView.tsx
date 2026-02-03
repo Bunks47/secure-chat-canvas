@@ -18,9 +18,21 @@ import {
   MoreVertical,
   Phone,
   Video,
-  Info
+  Info,
+  Wifi,
+  WifiOff,
+  Loader2
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { KeyFingerprintDisplay } from '@/components/crypto/KeyFingerprintDisplay';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 
 function formatMessageTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -50,20 +62,77 @@ function MessageStatus({ status }: { status: string }) {
   }
 }
 
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-1 px-3 py-2">
+      <div className="flex gap-1">
+        <span className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+      </div>
+      <span className="text-xs text-muted-foreground ml-2">typing...</span>
+    </div>
+  );
+}
+
+function ConnectionIndicator({ state }: { state: string }) {
+  if (state === 'connected') {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-green-600">
+        <Wifi className="w-3 h-3" />
+        <span>Connected</span>
+      </div>
+    );
+  }
+  
+  if (state === 'connecting' || state === 'reconnecting') {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-yellow-600">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        <span>{state === 'connecting' ? 'Connecting...' : 'Reconnecting...'}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-red-600">
+      <WifiOff className="w-3 h-3" />
+      <span>Offline</span>
+    </div>
+  );
+}
+
 export function MessageView() {
-  const { activeConversation, messages, sendMessage, setTyping } = useChat();
+  const { 
+    activeConversation, 
+    messages, 
+    sendMessage, 
+    setTyping, 
+    typingIndicators,
+    connectionState,
+    loadMoreMessages,
+    hasMoreMessages,
+    isLoading,
+  } = useChat();
   const { user } = useAuth();
   const [newMessage, setNewMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [showContactInfo, setShowContactInfo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Get typing users for current conversation
+  const typingUsers = activeConversation 
+    ? typingIndicators.get(activeConversation.id) 
+    : undefined;
+  const isContactTyping = typingUsers && typingUsers.size > 0;
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isContactTyping]);
 
   // Reset message input when conversation changes
   useEffect(() => {
@@ -145,34 +214,53 @@ export function MessageView() {
                 }
               </span>
               {activeConversation.isEncrypted && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="encryption-badge cursor-help">
+                <Dialog open={showContactInfo} onOpenChange={setShowContactInfo}>
+                  <DialogTrigger asChild>
+                    <div className="encryption-badge cursor-pointer hover:bg-primary/15 transition-colors">
                       <Shield className="w-3 h-3" />
                       <span>E2EE</span>
                     </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs">
-                    <div className="space-y-1">
-                      <p className="font-medium">End-to-end encrypted</p>
-                      <p className="text-xs text-muted-foreground">
-                        Fingerprint: {activeConversation.contact.fingerprint}
-                      </p>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Encryption Details</DialogTitle>
+                      <DialogDescription>
+                        Verify your contact's identity by comparing fingerprints
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <KeyFingerprintDisplay
+                        fingerprint={activeConversation.contact.fingerprint}
+                        label={`${activeConversation.contact.displayName}'s Key`}
+                      />
+                      <div className="flex items-start gap-2 p-3 bg-muted rounded-lg">
+                        <Shield className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        <p className="text-xs text-muted-foreground">
+                          Messages to {activeConversation.contact.displayName} are encrypted using 
+                          AES-256-GCM with keys derived via ECDH + HKDF. Only you and they can read them.
+                        </p>
+                      </div>
                     </div>
-                  </TooltipContent>
-                </Tooltip>
+                  </DialogContent>
+                </Dialog>
               )}
             </div>
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <ConnectionIndicator state={connectionState} />
           <Button variant="ghost" size="icon" className="text-muted-foreground">
             <Phone className="w-4 h-4" />
           </Button>
           <Button variant="ghost" size="icon" className="text-muted-foreground">
             <Video className="w-4 h-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="text-muted-foreground">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="text-muted-foreground"
+            onClick={() => setShowContactInfo(true)}
+          >
             <Info className="w-4 h-4" />
           </Button>
           <Button variant="ghost" size="icon" className="text-muted-foreground">
@@ -184,6 +272,23 @@ export function MessageView() {
       {/* Messages */}
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         <div className="space-y-4 max-w-3xl mx-auto">
+          {/* Load More Button */}
+          {hasMoreMessages && (
+            <div className="flex justify-center">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={loadMoreMessages}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : null}
+                Load older messages
+              </Button>
+            </div>
+          )}
+
           {/* Encryption Notice */}
           <div className="flex justify-center">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/5 text-xs text-muted-foreground">
@@ -253,6 +358,22 @@ export function MessageView() {
               </div>
             );
           })}
+
+          {/* Typing Indicator */}
+          {isContactTyping && (
+            <div className="flex gap-2 justify-start animate-fade-in">
+              <div className="w-8 shrink-0">
+                <Avatar className="h-8 w-8">
+                  <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                    {activeConversation.contact.displayName.slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+              </div>
+              <div className="bg-chat-bubble-received rounded-2xl rounded-bl-md">
+                <TypingIndicator />
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
 
@@ -262,17 +383,18 @@ export function MessageView() {
           <div className="flex-1 relative">
             <Textarea
               ref={textareaRef}
-              placeholder="Type a message..."
+              placeholder={connectionState === 'connected' ? 'Type a message...' : 'Reconnecting...'}
               value={newMessage}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              disabled={connectionState !== 'connected'}
               className="min-h-[44px] max-h-32 resize-none pr-12 bg-background"
               rows={1}
             />
           </div>
           <Button 
             onClick={handleSend} 
-            disabled={!newMessage.trim() || isSending}
+            disabled={!newMessage.trim() || isSending || connectionState !== 'connected'}
             className="h-11 w-11 shrink-0 rounded-xl"
           >
             <Send className="w-4 h-4" />
