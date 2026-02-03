@@ -3,6 +3,7 @@ import type { AuthState, User, LoginCredentials, SignupCredentials, AuthTokens }
 import { storeTokens, storeUser, getStoredTokens, getStoredUser, clearAuthData, isTokenExpired, shouldRefreshToken } from '@/lib/auth/types';
 import { generateIdentityKeyPair, exportKeyPair, createKeyBackup, restoreKeyFromBackup, type KeyPair, type EncryptedKeyBackup } from '@/lib/crypto';
 import { storeKeyPair, getKeyPair, deleteKeyPair } from '@/lib/storage/indexeddb';
+import { clearAllData } from '@/lib/storage/indexeddb';
 
 // Actions
 type AuthAction =
@@ -74,17 +75,25 @@ interface AuthContextType extends AuthState {
   getKeyPair: () => Promise<KeyPair | null>;
   createKeyBackup: (password: string) => Promise<EncryptedKeyBackup>;
   restoreFromBackup: (backup: EncryptedKeyBackup, password: string) => Promise<void>;
+  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 // Mock API functions (replace with real API calls)
-async function mockLogin(_credentials: LoginCredentials): Promise<{ user: User; tokens: AuthTokens }> {
+async function mockLogin(_credentials: LoginCredentials): Promise<{ user: User; tokens: AuthTokens; keyPair: KeyPair }> {
   // Simulate API delay
   await new Promise(resolve => setTimeout(resolve, 1000));
   
-  // Generate demo user
-  const keyPair = await generateIdentityKeyPair();
+  // Generate or retrieve identity key pair
+  let keyPair = await getKeyPair('identity').then(async stored => {
+    if (stored) {
+      // In production: decrypt stored key with password
+      return generateIdentityKeyPair(); // For demo, generate new
+    }
+    return generateIdentityKeyPair();
+  });
+  
   const exported = await exportKeyPair(keyPair);
   
   return {
@@ -102,6 +111,7 @@ async function mockLogin(_credentials: LoginCredentials): Promise<{ user: User; 
       refreshToken: 'demo.refresh.token.' + Date.now(),
       expiresAt: Date.now() + 3600000, // 1 hour
     },
+    keyPair,
   };
 }
 
@@ -130,6 +140,19 @@ async function mockSignup(_credentials: SignupCredentials): Promise<{ user: User
   };
 }
 
+async function mockRefreshToken(refreshToken: string): Promise<AuthTokens> {
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  return {
+    accessToken: 'demo.access.token.' + Date.now(),
+    refreshToken: 'demo.refresh.token.' + Date.now(),
+    expiresAt: Date.now() + 3600000,
+  };
+}
+
+// Keep track of current key pair in memory
+let currentKeyPair: KeyPair | null = null;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
@@ -140,6 +163,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const user = getStoredUser();
 
       if (tokens && user && !isTokenExpired(tokens)) {
+        // Restore key pair if available
+        const storedKey = await getKeyPair('identity');
+        if (storedKey) {
+          // In production: decrypt and load key pair
+          currentKeyPair = await generateIdentityKeyPair(); // Demo: regenerate
+        }
+
         dispatch({
           type: 'AUTH_SUCCESS',
           payload: { user, token: tokens.accessToken },
@@ -156,20 +186,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!state.isAuthenticated) return;
 
-    const tokens = getStoredTokens();
-    if (!tokens) return;
-
-    if (shouldRefreshToken(tokens)) {
-      // In real app, call refresh endpoint
-      console.log('Token should be refreshed');
-    }
-
-    const interval = setInterval(() => {
-      const currentTokens = getStoredTokens();
-      if (currentTokens && shouldRefreshToken(currentTokens)) {
-        console.log('Token should be refreshed');
+    const checkRefresh = async () => {
+      const tokens = getStoredTokens();
+      if (tokens && shouldRefreshToken(tokens)) {
+        try {
+          const newTokens = await mockRefreshToken(tokens.refreshToken);
+          storeTokens(newTokens);
+          console.log('[Auth] Token refreshed');
+        } catch (error) {
+          console.error('[Auth] Token refresh failed:', error);
+          dispatch({ type: 'AUTH_LOGOUT' });
+        }
       }
-    }, 60000); // Check every minute
+    };
+
+    checkRefresh();
+    const interval = setInterval(checkRefresh, 60000); // Check every minute
 
     return () => clearInterval(interval);
   }, [state.isAuthenticated]);
@@ -178,8 +210,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'AUTH_START' });
 
     try {
-      const { user, tokens } = await mockLogin(credentials);
+      const { user, tokens, keyPair } = await mockLogin(credentials);
       
+      currentKeyPair = keyPair;
       storeTokens(tokens);
       storeUser(user);
 
@@ -202,6 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { user, tokens, keyPair } = await mockSignup(credentials);
       
+      currentKeyPair = keyPair;
       storeTokens(tokens);
       storeUser(user);
 
@@ -256,7 +290,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     clearAuthData();
-    await deleteKeyPair('identity');
+    await clearAllData(); // Clear all IndexedDB data
+    currentKeyPair = null;
     dispatch({ type: 'AUTH_LOGOUT' });
   }, []);
 
@@ -265,12 +300,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getUserKeyPair = useCallback(async (): Promise<KeyPair | null> => {
+    if (currentKeyPair) return currentKeyPair;
+
     const stored = await getKeyPair('identity');
     if (!stored) return null;
 
-    // In real app, decrypt and return key pair
+    // In production: decrypt and return stored key pair
     // For demo, generate new one
-    return generateIdentityKeyPair();
+    currentKeyPair = await generateIdentityKeyPair();
+    return currentKeyPair;
   }, []);
 
   const createBackup = useCallback(async (password: string): Promise<EncryptedKeyBackup> => {
@@ -285,6 +323,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const keyPair = await restoreKeyFromBackup(backup, password);
     const exported = await exportKeyPair(keyPair);
     
+    currentKeyPair = keyPair;
+
     await storeKeyPair({
       id: 'identity',
       publicKey: exported.publicKey,
@@ -294,6 +334,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       fingerprint: keyPair.fingerprint,
       createdAt: Date.now(),
     });
+
+    // Update user if authenticated
+    if (state.user) {
+      const updatedUser = {
+        ...state.user,
+        publicKey: exported.publicKey,
+        fingerprint: keyPair.fingerprint,
+      };
+      storeUser(updatedUser);
+      dispatch({
+        type: 'AUTH_SUCCESS',
+        payload: { user: updatedUser, token: state.token || '' },
+      });
+    }
+  }, [state.user, state.token]);
+
+  const refreshSession = useCallback(async () => {
+    const tokens = getStoredTokens();
+    if (!tokens) throw new Error('No tokens found');
+
+    const newTokens = await mockRefreshToken(tokens.refreshToken);
+    storeTokens(newTokens);
   }, []);
 
   const value: AuthContextType = {
@@ -307,6 +369,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     getKeyPair: getUserKeyPair,
     createKeyBackup: createBackup,
     restoreFromBackup,
+    refreshSession,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

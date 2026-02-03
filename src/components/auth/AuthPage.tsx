@@ -6,17 +6,21 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
-import { Shield, Lock, Github, Mail, KeyRound, AlertCircle } from 'lucide-react';
+import { Shield, Lock, Github, KeyRound, AlertCircle, Upload, Eye, EyeOff } from 'lucide-react';
+import { KeyFingerprintDisplay } from '@/components/crypto/KeyFingerprintDisplay';
+import type { EncryptedKeyBackup } from '@/lib/crypto';
 
 export function AuthPage() {
-  const { login, signup, loginWithGoogle, loginWithGithub, isLoading, error, clearError } = useAuth();
-  const [activeTab, setActiveTab] = useState<'login' | 'signup'>('login');
+  const { login, signup, loginWithGoogle, loginWithGithub, restoreFromBackup, isLoading, error, clearError } = useAuth();
+  const [activeTab, setActiveTab] = useState<'login' | 'signup' | 'restore'>('login');
   const [showKeyBackup, setShowKeyBackup] = useState(false);
   const [keyBackupData, setKeyBackupData] = useState<string | null>(null);
+  const [newUserFingerprint, setNewUserFingerprint] = useState<string | null>(null);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Signup form state
   const [signupEmail, setSignupEmail] = useState('');
@@ -24,6 +28,13 @@ export function AuthPage() {
   const [signupDisplayName, setSignupDisplayName] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+
+  // Restore form state
+  const [restoreBackupText, setRestoreBackupText] = useState('');
+  const [restorePassword, setRestorePassword] = useState('');
+  const [showRestorePassword, setShowRestorePassword] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,10 +65,37 @@ export function AuthPage() {
 
       // Show key backup prompt
       setKeyBackupData(JSON.stringify(result.keyBackup, null, 2));
+      setNewUserFingerprint(result.keyBackup.fingerprint);
       setShowKeyBackup(true);
     } catch (err) {
       // Error handled by context
     }
+  };
+
+  const handleRestore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRestoreError(null);
+
+    try {
+      const backup = JSON.parse(restoreBackupText) as EncryptedKeyBackup;
+      await restoreFromBackup(backup, restorePassword);
+      // After restore, user needs to login with their credentials
+      setActiveTab('login');
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : 'Failed to restore keys');
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      setRestoreBackupText(content);
+    };
+    reader.readAsText(file);
   };
 
   if (showKeyBackup && keyBackupData) {
@@ -74,6 +112,13 @@ export function AuthPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {newUserFingerprint && (
+              <KeyFingerprintDisplay
+                fingerprint={newUserFingerprint}
+                label="Your New Key Fingerprint"
+                compact={false}
+              />
+            )}
             <div className="bg-muted rounded-lg p-4 overflow-auto max-h-48">
               <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
                 {keyBackupData}
@@ -131,11 +176,12 @@ export function AuthPage() {
 
         {/* Auth Card */}
         <Card className="animate-fade-in">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'login' | 'signup')}>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'login' | 'signup' | 'restore')}>
             <CardHeader className="pb-4">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="login">Sign In</TabsTrigger>
                 <TabsTrigger value="signup">Sign Up</TabsTrigger>
+                <TabsTrigger value="restore">Restore</TabsTrigger>
               </TabsList>
             </CardHeader>
 
@@ -162,14 +208,30 @@ export function AuthPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="login-password">Password</Label>
-                    <Input
-                      id="login-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      required
-                    />
+                    <div className="relative">
+                      <Input
+                        id="login-password"
+                        type={showLoginPassword ? 'text' : 'password'}
+                        placeholder="••••••••"
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        required
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      >
+                        {showLoginPassword ? (
+                          <EyeOff className="w-4 h-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? 'Signing in...' : 'Sign In'}
@@ -214,21 +276,37 @@ export function AuthPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-password">Password</Label>
-                    <Input
-                      id="signup-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={signupPassword}
-                      onChange={(e) => setSignupPassword(e.target.value)}
-                      required
-                      minLength={8}
-                    />
+                    <div className="relative">
+                      <Input
+                        id="signup-password"
+                        type={showSignupPassword ? 'text' : 'password'}
+                        placeholder="••••••••"
+                        value={signupPassword}
+                        onChange={(e) => setSignupPassword(e.target.value)}
+                        required
+                        minLength={8}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                        onClick={() => setShowSignupPassword(!showSignupPassword)}
+                      >
+                        {showSignupPassword ? (
+                          <EyeOff className="w-4 h-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-confirm-password">Confirm Password</Label>
                     <Input
                       id="signup-confirm-password"
-                      type="password"
+                      type={showSignupPassword ? 'text' : 'password'}
                       placeholder="••••••••"
                       value={signupConfirmPassword}
                       onChange={(e) => setSignupConfirmPassword(e.target.value)}
@@ -238,12 +316,94 @@ export function AuthPage() {
                       <p className="text-xs text-destructive">Passwords don't match</p>
                     )}
                   </div>
+                  <div className="flex items-start gap-2 p-3 bg-muted rounded-lg">
+                    <KeyRound className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                    <p className="text-xs text-muted-foreground">
+                      A new encryption key will be generated. You'll be prompted to create a backup after signup.
+                    </p>
+                  </div>
                   <Button 
                     type="submit" 
                     className="w-full" 
                     disabled={isLoading || signupPassword !== signupConfirmPassword}
                   >
                     {isLoading ? 'Creating account...' : 'Create Account'}
+                  </Button>
+                </form>
+              </TabsContent>
+
+              <TabsContent value="restore" className="space-y-4 mt-0">
+                <form onSubmit={handleRestore} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Backup File</Label>
+                    <div className="border-2 border-dashed rounded-lg p-4 text-center hover:border-primary/50 transition-colors">
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        id="restore-file-input"
+                      />
+                      <label htmlFor="restore-file-input" className="cursor-pointer">
+                        <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                        <p className="text-sm font-medium">Upload backup file</p>
+                        <p className="text-xs text-muted-foreground">or paste data below</p>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="restore-backup">Backup Data</Label>
+                    <textarea
+                      id="restore-backup"
+                      placeholder='{"encryptedPrivateKey": "...", "salt": "...", ...}'
+                      value={restoreBackupText}
+                      onChange={(e) => setRestoreBackupText(e.target.value)}
+                      className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="restore-password">Backup Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="restore-password"
+                        type={showRestorePassword ? 'text' : 'password'}
+                        placeholder="Enter backup password"
+                        value={restorePassword}
+                        onChange={(e) => setRestorePassword(e.target.value)}
+                        required
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                        onClick={() => setShowRestorePassword(!showRestorePassword)}
+                      >
+                        {showRestorePassword ? (
+                          <EyeOff className="w-4 h-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {restoreError && (
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      {restoreError}
+                    </div>
+                  )}
+
+                  <Button 
+                    type="submit" 
+                    className="w-full" 
+                    disabled={isLoading || !restoreBackupText || !restorePassword}
+                  >
+                    {isLoading ? 'Restoring...' : 'Restore Keys'}
                   </Button>
                 </form>
               </TabsContent>

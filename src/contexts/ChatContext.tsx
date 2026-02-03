@@ -1,15 +1,20 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { Contact, Conversation, Message, TypingIndicator, PresenceUpdate } from '@/lib/chat/types';
 import { useAuth } from './AuthContext';
+import { messageStore } from '@/lib/storage/messageStore';
+import { WebSocketClient, type ConnectionState } from '@/lib/websocket/client';
 
 interface ChatContextType {
+  // State
   conversations: Conversation[];
   activeConversation: Conversation | null;
   messages: Message[];
   contacts: Contact[];
-  typingIndicators: Map<string, boolean>;
+  typingIndicators: Map<string, Set<string>>;
+  presenceMap: Map<string, PresenceUpdate>;
   isLoading: boolean;
   error: string | null;
+  connectionState: ConnectionState;
   
   // Actions
   selectConversation: (conversationId: string) => void;
@@ -20,6 +25,9 @@ interface ChatContextType {
   searchContacts: (query: string) => Promise<Contact[]>;
   addContact: (username: string) => Promise<Contact>;
   clearError: () => void;
+  refreshConversations: () => Promise<void>;
+  loadMoreMessages: () => Promise<void>;
+  hasMoreMessages: boolean;
 }
 
 const ChatContext = createContext<ChatContextType | null>(null);
@@ -31,7 +39,7 @@ const demoContacts: Contact[] = [
     username: 'alice',
     displayName: 'Alice Chen',
     avatar: undefined,
-    publicKey: 'demo-pk-1',
+    publicKey: 'BK7x1yZ2mV9c4P6wF0aQ3dE8hU5tR2nL7jM1kX9sG4oC',
     fingerprint: 'A1B2-C3D4-E5F6-7890',
     isOnline: true,
   },
@@ -40,7 +48,7 @@ const demoContacts: Contact[] = [
     username: 'bob',
     displayName: 'Bob Smith',
     avatar: undefined,
-    publicKey: 'demo-pk-2',
+    publicKey: 'CL8y2zA3nW0d5Q7xG1bR4eF9iV6uS3oM8kN2lY0tH5pD',
     fingerprint: 'B2C3-D4E5-F6A7-8901',
     isOnline: false,
     lastSeen: Date.now() - 3600000,
@@ -50,7 +58,7 @@ const demoContacts: Contact[] = [
     username: 'carol',
     displayName: 'Carol Williams',
     avatar: undefined,
-    publicKey: 'demo-pk-3',
+    publicKey: 'DM9z3AB4oX1e6R8yH2cS5fG0jW7vT4pN9lO3mZ1uI6qE',
     fingerprint: 'C3D4-E5F6-A7B8-9012',
     isOnline: true,
   },
@@ -100,15 +108,48 @@ const demoMessages: Record<string, Message[]> = {
 };
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, token } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [contacts, setContacts] = useState<Contact[]>(demoContacts);
-  const [typingIndicators, setTypingIndicators] = useState<Map<string, boolean>>(new Map());
+  const [typingIndicators, setTypingIndicators] = useState<Map<string, Set<string>>>(new Map());
+  const [presenceMap, setPresenceMap] = useState<Map<string, PresenceUpdate>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  
   const typingTimeoutRef = useRef<number | null>(null);
+  const wsClientRef = useRef<WebSocketClient | null>(null);
+
+  // Initialize WebSocket connection when authenticated
+  useEffect(() => {
+    if (isAuthenticated && token && user) {
+      // In production, this would connect to actual WebSocket server
+      // For demo, we simulate the connection
+      setConnectionState('connected');
+      
+      // Initialize presence for demo contacts
+      const initialPresence = new Map<string, PresenceUpdate>();
+      demoContacts.forEach(contact => {
+        initialPresence.set(contact.id, {
+          userId: contact.id,
+          isOnline: contact.isOnline,
+          lastSeen: contact.lastSeen,
+        });
+      });
+      setPresenceMap(initialPresence);
+    } else {
+      setConnectionState('disconnected');
+    }
+
+    return () => {
+      if (wsClientRef.current) {
+        wsClientRef.current.disconnect();
+      }
+    };
+  }, [isAuthenticated, token, user]);
 
   // Initialize demo conversations when authenticated
   useEffect(() => {
@@ -139,11 +180,50 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, user]);
 
+  // Simulate typing indicators from other users
+  useEffect(() => {
+    if (!activeConversation) return;
+
+    // Demo: simulate typing occasionally
+    const interval = setInterval(() => {
+      if (Math.random() > 0.95 && activeConversation.contact.isOnline) {
+        const convId = activeConversation.id;
+        const userId = activeConversation.contact.id;
+
+        setTypingIndicators(prev => {
+          const newMap = new Map(prev);
+          const users = new Set(newMap.get(convId) || []);
+          users.add(userId);
+          newMap.set(convId, users);
+          return newMap;
+        });
+
+        // Clear after 2 seconds
+        setTimeout(() => {
+          setTypingIndicators(prev => {
+            const newMap = new Map(prev);
+            const users = newMap.get(convId);
+            if (users) {
+              users.delete(userId);
+              if (users.size === 0) {
+                newMap.delete(convId);
+              }
+            }
+            return newMap;
+          });
+        }, 2000);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeConversation]);
+
   const selectConversation = useCallback((conversationId: string) => {
     const conv = conversations.find(c => c.id === conversationId);
     if (conv) {
       setActiveConversation(conv);
       setMessages(demoMessages[conversationId] || []);
+      setHasMoreMessages(false); // Demo has all messages loaded
       
       // Mark as read
       setConversations(prev => 
@@ -169,6 +249,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
     setMessages(prev => [...prev, newMessage]);
 
+    // Store locally (in production, would encrypt first)
+    try {
+      await messageStore.saveMessage({
+        id: newMessage.id,
+        conversationId: newMessage.conversationId,
+        senderId: newMessage.senderId,
+        recipientId: activeConversation.contact.id,
+        ciphertext: btoa(content), // Demo: base64 encode (not real encryption)
+        timestamp: newMessage.timestamp,
+      });
+    } catch (err) {
+      console.error('Failed to store message:', err);
+    }
+
     // Simulate sending
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -187,27 +281,29 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       )
     );
 
-    // Simulate reply after 2 seconds
-    setTimeout(() => {
-      const reply: Message = {
-        id: 'msg-' + Date.now(),
-        conversationId: activeConversation.id,
-        senderId: activeConversation.contact.id,
-        content: '👍 Got it! (This is a demo response)',
-        timestamp: Date.now(),
-        status: 'delivered',
-        isEncrypted: true,
-      };
-      
-      setMessages(prev => [...prev, reply]);
-      setConversations(prev =>
-        prev.map(c =>
-          c.id === activeConversation.id
-            ? { ...c, lastMessage: reply, updatedAt: Date.now() }
-            : c
-        )
-      );
-    }, 2000);
+    // Simulate reply after 2 seconds (only if online)
+    if (activeConversation.contact.isOnline) {
+      setTimeout(() => {
+        const reply: Message = {
+          id: 'msg-' + Date.now(),
+          conversationId: activeConversation.id,
+          senderId: activeConversation.contact.id,
+          content: '👍 Got it! (This is a demo response)',
+          timestamp: Date.now(),
+          status: 'delivered',
+          isEncrypted: true,
+        };
+        
+        setMessages(prev => [...prev, reply]);
+        setConversations(prev =>
+          prev.map(c =>
+            c.id === activeConversation.id
+              ? { ...c, lastMessage: reply, updatedAt: Date.now() }
+              : c
+          )
+        );
+      }, 2000);
+    }
   }, [activeConversation, user]);
 
   const startConversation = useCallback((contact: Contact) => {
@@ -240,8 +336,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    // In real app, send typing indicator via WebSocket
-    console.log('Typing:', isTyping);
+    // In production: send typing indicator via WebSocket
+    if (wsClientRef.current) {
+      // wsClientRef.current.send('typing', { conversationId: activeConversation.id, isTyping });
+    }
 
     if (isTyping) {
       typingTimeoutRef.current = window.setTimeout(() => {
@@ -250,12 +348,19 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeConversation]);
 
-  const markAsRead = useCallback((conversationId: string) => {
+  const markAsRead = useCallback(async (conversationId: string) => {
     setConversations(prev =>
       prev.map(c =>
         c.id === conversationId ? { ...c, unreadCount: 0 } : c
       )
     );
+
+    // Mark all messages in conversation as read
+    try {
+      await messageStore.markConversationAsRead(conversationId);
+    } catch (err) {
+      console.error('Failed to mark as read:', err);
+    }
   }, []);
 
   const searchContacts = useCallback(async (query: string): Promise<Contact[]> => {
@@ -276,14 +381,36 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       id: 'contact-' + Date.now(),
       username,
       displayName: username,
-      publicKey: 'demo-pk-' + Date.now(),
+      publicKey: 'EQ0A4BC5pY2f7S9zI3dT6gH1kW8wU5qO0mP4nA2vJ7rF',
       fingerprint: 'XXXX-XXXX-XXXX-XXXX',
       isOnline: false,
     };
 
     setContacts(prev => [...prev, newContact]);
+    
+    // Add to presence map
+    setPresenceMap(prev => new Map(prev).set(newContact.id, {
+      userId: newContact.id,
+      isOnline: false,
+    }));
+
     return newContact;
   }, []);
+
+  const refreshConversations = useCallback(async () => {
+    setIsLoading(true);
+    // In production: fetch from server
+    await new Promise(resolve => setTimeout(resolve, 500));
+    setIsLoading(false);
+  }, []);
+
+  const loadMoreMessages = useCallback(async () => {
+    if (!activeConversation || !hasMoreMessages) return;
+    setIsLoading(true);
+    // In production: fetch older messages from IndexedDB or server
+    await new Promise(resolve => setTimeout(resolve, 500));
+    setIsLoading(false);
+  }, [activeConversation, hasMoreMessages]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -295,8 +422,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     messages,
     contacts,
     typingIndicators,
+    presenceMap,
     isLoading,
     error,
+    connectionState,
     selectConversation,
     sendMessage,
     startConversation,
@@ -305,6 +434,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     searchContacts,
     addContact,
     clearError,
+    refreshConversations,
+    loadMoreMessages,
+    hasMoreMessages,
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
